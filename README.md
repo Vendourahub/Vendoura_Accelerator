@@ -1,101 +1,110 @@
 # Vendoura Hub Accelerator
 
-A comprehensive platform management system for the Vendoura Hub founder acceleration program. This application provides tools for program management, founder tracking, and milestone reporting.
+Platform management system for the Vendoura Hub founder acceleration program —
+program oversight, founder tracking, milestone reporting, and cohort analytics
+for founders and admins.
 
-## Project Structure
+Built from the [System Logic Blueprint](https://www.figma.com/design/yjNFYqqC19pCF6Ab574M5J/System-Logic-Blueprint)
+design system.
 
-This codebase is built from the [System Logic Blueprint](https://www.figma.com/design/yjNFYqqC19pCF6Ab574M5J/System-Logic-Blueprint) Figma design system.
+## The problem
 
-### Core Features
+The accelerator runs structured cohorts: founders commit to weekly activity, submit
+reports, hit milestones, and are tracked against program KPIs. Spreadsheets can't do
+this safely — and a demo-only app that loses data on refresh can't either. The
+Accelerator needed **real authentication, persistent per-founder data, and role-based
+access control**, not a local prototype.
 
-- **Founder Management** - Track founder progress, commits, and reports
-- **Admin Dashboard** - Comprehensive analytics and program oversight
-- **Authentication** - Unified auth system for founders and admins (localStorage-based)
-- **Program Tracking** - Weekly commits, revenue tracking, and milestone management
-- **Cohort Management** - Organize and manage founder cohorts
+## What it provides
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- npm or pnpm
-
-### Installation
-
-```bash
-# Install dependencies
-npm i
-
-# Start development server
-npm run dev
-```
-
-The app will open at `http://localhost:3000`.
+- **Founder workspace** — onboarding, dashboard, weekly commits, reports, profile management
+- **Admin console** — founder directory, cohort analytics, weekly tracking, system settings
+- **Program management** — applications, waitlist, milestones, revenue tracking
+- **Secure auth** — email/password signup and sign-in for founders *and* admins
+- **Row-level security** — the database enforces that founders only see their own data
+- **Profile photos** — file uploads to Supabase Storage (validated, size-limited)
 
 ## Architecture
 
-### Authentication System
-
-The app uses a **unified authentication manager** (`src/lib/authManager.ts`) that handles both founder and admin logins:
-
-- **Founders**: Sign in via `/login`, access `/founder/dashboard`
-- **Admins**: Sign in via `/admin/login`, access role-specific dashboards
-
-Authentication data is stored in **localStorage** (client-side only).
-
-### Key Files
-
-- `src/lib/authManager.ts` - Unified auth functions
-- `src/pages/Login.tsx` - Founder login
-- `src/pages/AdminLogin.tsx` - Admin login
-- `src/components/ProtectedRoute.tsx` - Route protection wrapper
-- `src/lib/localStorage.ts` - Client-side data persistence
-
-## Development
-
-### Available Scripts
-
-```bash
-npm run dev      # Start development server
-npm run build    # Build for production
-npm run preview  # Preview production build
+```
+┌───────────────────────────────────────────────────────────┐
+│  React 18 + Vite + TypeScript + Tailwind + Radix UI (SPA)  │
+│  ├─ src/pages/founder   (dashboard, commit, report, ...)   │
+│  ├─ src/pages/admin     (directory, analytics, settings)   │
+│  └─ src/lib             (authManager, founderService,      │
+│                          adminService, profilePhotoService) │
+└───────────────┬───────────────────────────────────────────┘
+                │  @supabase/supabase-js (anon key + JWT)
+┌───────────────▼───────────────────────────────────────────┐
+│  Supabase (backend-as-a-service)                           │
+│  ├─ Auth           email/password, JWT sessions            │
+│  ├─ Postgres       founder_profiles, admin_users,          │
+│  │                  weekly_commits, weekly_reports,         │
+│  │                  applications, waitlist, system_settings │
+│  ├─ Row Level Security  per-user + admin access policies    │
+│  └─ Storage        profile-photos bucket (public reads)     │
+└───────────────────────────────────────────────────────────┘
 ```
 
-## Recent Changes
+**Auth model.** `src/lib/authManager.ts` is the single source of truth for sessions:
+it calls Supabase Auth, resolves the role (`founder` vs `admin`) from the
+`founder_profiles` / `admin_users` tables, and verifies the active user against the
+stored session context. The database, not the client, decides what a role can access.
 
-- ✅ Created unified `authManager.ts` with separate founder/admin auth functions
-- ✅ Removed exposed default credentials from login pages
-- ✅ Fixed Figma asset imports to use proper relative paths
-- ✅ Consolidated Supabase references (now localStorage only)
-- ✅ Updated ProtectedRoute to use authManager instead of Supabase
+**Client-side storage is a cache, not a datastore.** `localStorage` holds only
+non-authoritative session context (active role, device id, admin session cache) and
+the Supabase auth token. All real data lives in Supabase Postgres.
 
-## Technology Stack
+## Data model (Supabase)
 
-- **React 18** - UI framework
-- **React Router 7** - Routing
-- **TypeScript** - Type safety
-- **Tailwind CSS** - Styling
-- **Vite** - Build tool
-- **Radix UI** - Component library
+| Table | Purpose | RLS |
+|-------|---------|-----|
+| `founder_profiles` | Founder identity, business, onboarding, stage | Own row only |
+| `admin_users` | Admin identity + `admin_role` | Admins / super admins |
+| `weekly_commits` | Weekly activity submissions | Own row only |
+| `weekly_reports` | Weekly progress reports | Own row only |
+| `applications` | Public program applications | Insert by anyone, read by admins |
+| `waitlist` | Public waitlist signups | Insert by anyone |
+| `system_settings` | Program status + settings | Admins only |
 
-## Configuration
+Schema is versioned in `supabase-schema.sql`; RLS and migration fixes live in the
+`*.sql` scripts at the repo root (see `SUPABASE_MIGRATION_STATUS.md`).
 
-See `src/lib/config.ts` for app configuration including:
-- OAuth settings
-- Feature flags
-- Currency and timezone settings
-- Cohort configuration
+## Getting started
+
+```bash
+npm i
+npm run dev    # http://localhost:3000
+```
+
+Environment variables (`.env.local`, gitignored):
+
+```
+VITE_SUPABASE_URL=https://<project>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon key>
+```
+
+Then, once:
+
+1. Run `supabase-schema.sql` in the Supabase SQL editor (creates tables + RLS).
+2. Run `setup-profile-photos-storage.sql` (creates the storage bucket + policies).
+3. Create your first admin: add a user in Supabase Auth, then insert their row into
+   `admin_users` (see `SUPABASE_MIGRATION_STATUS.md` for the exact SQL).
+
+## Deployment
+
+SPA rewrite rules are preconfigured for Render (`render.yaml`), Vercel (`vercel.json`),
+and Netlify (`netlify.toml`) so deep links don't 404 on refresh.
 
 ## Contributing
 
-When making changes:
+1. Route all data access through `src/lib/founderService.ts` / `adminService.ts` — never query `supabase` directly from pages
+2. Keep auth logic in `authManager.ts` and role checks in `ProtectedRoute`
+3. Prefer Supabase RLS over client-side filtering for access control
+4. Run `npm run build` and fix type errors before pushing
 
-1. Update imports to use the unified `authManager` for auth logic
-2. Avoid direct localStorage access outside of `lib/localStorage.ts`
-3. Use TypeScript for type safety
-4. Follow the existing code style
+## Status
 
-## Support
-
-For questions or issues, contact the Vendoura Hub team.
+Supabase migration is ~90% complete — auth, data services, RLS, and storage are
+implemented and building cleanly; remaining work is production testing and the
+first admin bootstrap (tracked in `SUPABASE_MIGRATION_STATUS.md`).
